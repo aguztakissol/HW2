@@ -1,38 +1,63 @@
 using UnityEngine;
 using TMPro;
 
+[ExecuteInEditMode]  // Allows you to see letters in Editor without Play mode
 public class EyeTestPrefabGenerator : MonoBehaviour
 {
-    public Canvas worldCanvas;       // Assign your EyeTestCanvas here
-    public TMP_Text letterPrefab;    // Assign LetterPrefab here
-    public string letters = "ABCDEF"; // Letters to display
-    public float startY = 0f;         // Y-position of top letter
-    public float verticalSpacing = -100f; // Spacing between letters
-    public float startingFontSize = 200f; // Biggest letter
-    public float fontSizeDecrement = 30f; // Decrease per row
+    [Header("Canvas & Prefab")]
+    public Canvas worldCanvas;       // Assign your World Space Canvas here
+    public TMP_Text letterPrefab;    // Assign TMP_Text prefab here
 
-    void Start()
+    [Header("Characters")]
+    public string characters = "AB124C89aZTU"; // Mixed letters and numbers
+
+    [Header("Position & Spacing")]
+    public float startX = 0f;        // Starting X position
+    public float startY = 0f;        // Y position of the row
+    public float horizontalSpacing = 0.1f; // Spacing in Unity meters (world space)
+
+    [Header("Font Settings")]
+    public float startingFontSize = 0.1f;  // Font size in meters
+    public float fontSizeDecrement = 0.01f; // Decrease per character
+
+    [Header("Magnifier Mode")]
+    public bool magnifierMode = false; // Doubles the font size for magnifier
+
+    void OnValidate()
     {
-        GenerateEyeTest();
+        if (worldCanvas == null || letterPrefab == null) return;
+
+        // Clear previous letters
+        for (int i = worldCanvas.transform.childCount - 1; i >= 0; i--)
+        {
+            DestroyImmediate(worldCanvas.transform.GetChild(i).gameObject);
+        }
+
+        GenerateMixedRow(characters);
     }
 
-    public void GenerateEyeTest()
+    public void GenerateMixedRow(string chars)
     {
         float currentFontSize = startingFontSize;
-        float currentY = startY;
+        float currentX = startX;
 
-        foreach (char c in letters)
+        foreach (char c in chars)
         {
-            TMP_Text letter = Instantiate(letterPrefab, worldCanvas.transform);
-            letter.text = c.ToString();
-            letter.fontSize = currentFontSize;
-            letter.alignment = TextAlignmentOptions.Center;
+            TMP_Text character = Instantiate(letterPrefab, worldCanvas.transform);
+            character.text = c.ToString();
 
-            RectTransform rt = letter.GetComponent<RectTransform>();
-            rt.anchoredPosition = new Vector2(0, currentY);
+            // Adjust for magnifier
+            float fontSizeToUse = magnifierMode ? currentFontSize * 2f : currentFontSize;
+            character.fontSize = fontSizeToUse;
 
-            currentY += verticalSpacing;
-            currentFontSize -= fontSizeDecrement;
+            character.alignment = TextAlignmentOptions.Center;
+
+            RectTransform rt = character.GetComponent<RectTransform>();
+            rt.localPosition = new Vector3(currentX, startY, 0f); // world-space positioning
+            rt.localScale = Vector3.one; // keep scale correct
+
+            currentX += horizontalSpacing;   // move next letter
+            currentFontSize -= fontSizeDecrement; // reduce font size
         }
     }
 }

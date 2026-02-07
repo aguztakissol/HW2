@@ -4,131 +4,143 @@ using UnityEngine.InputSystem;
 
 public class CustomGrab : MonoBehaviour
 {
-    // --- Existing fields ---
-    public InputActionReference action;       // Input action for grab (Grip button)
-    public List<Transform> nearObjects = new List<Transform>(); // Objects in range
-    public Transform grabbedObject = null;    // Currently grabbed object
-    public bool doubleRotation = false;       // Extra credit toggle
+    // --- Public fields ---
+    public InputActionReference action;          // Input action for grab (Grip button)
+    public bool doubleRotation = false;          // Extra credit toggle
 
     // --- Internal ---
-    CustomGrab otherHand = null;              // Reference to the other hand
-    bool grabbing = false;                     // Is this hand holding something?
-    Vector3 lastPosition;                      // Last frame position
-    Quaternion lastRotation;                   // Last frame rotation
+    public List<Transform> nearObjects = new List<Transform>(); // Objects in range
+    public Transform grabbedObject = null;      // Currently grabbed object
+    private List<CustomGrab> grabbingHands = new List<CustomGrab>(); // All hands grabbing this object
 
-    void Start()
+    private bool grabbing = false;              // Is this hand holding something?
+    private Vector3 lastPosition;               // Last frame position
+    private Quaternion lastRotation;            // Last frame rotation
+
+    private void Start()
     {
         action.action.Enable();
-
-        // Find the other hand in the same parent hierarchy
-        foreach (CustomGrab c in transform.parent.GetComponentsInChildren<CustomGrab>())
-        {
-            if (c != this)
-                otherHand = c;
-        }
-
-        // Initialize last position/rotation
         lastPosition = transform.position;
         lastRotation = transform.rotation;
     }
 
-    void Update()
+    private void Update()
     {
         grabbing = action.action.IsPressed();
 
         if (grabbing)
         {
-            // Grab nearby object or object held by other hand
+            // --- Step 1: Grab object if not already ---
             if (!grabbedObject)
             {
-                grabbedObject = nearObjects.Count > 0 ? nearObjects[0] :
-                                (otherHand != null ? otherHand.grabbedObject : null);
+                grabbedObject = GetClosestGrabbable();
+                if (grabbedObject)
+                    RegisterHand(this);
+            }
+            else if (!grabbingHands.Contains(this))
+            {
+                RegisterHand(this);
             }
 
             if (grabbedObject)
             {
-                // --- Step 1: Compute deltas for this hand ---
-                Vector3 deltaPos = transform.position - lastPosition;
-                Quaternion deltaRot = transform.rotation * Quaternion.Inverse(lastRotation);
-
-                // --- Step 2: Check if other hand is also grabbing the same object ---
-                if (otherHand != null && otherHand.grabbedObject == grabbedObject)
-                {
-                    // Other hand's deltas
-                    Vector3 otherDeltaPos = otherHand.transform.position - otherHand.lastPosition;
-                    Quaternion otherDeltaRot = otherHand.transform.rotation * Quaternion.Inverse(otherHand.lastRotation);
-
-                    // Combine translations
-                    Vector3 totalDeltaPos = deltaPos + otherDeltaPos;
-
-                    // Apply combined translation
-                    grabbedObject.position += totalDeltaPos;
-
-                    // Apply rotations around each hand
-                    foreach (var hand in new Transform[] { transform, otherHand.transform })
-                    {
-                        Vector3 dir = grabbedObject.position - hand.position;
-                        Quaternion dRot = (hand == transform) ? deltaRot : otherDeltaRot;
-                        dir = dRot * dir;
-                        grabbedObject.position = hand.position + dir;
-                    }
-
-                    // Combine rotations
-                    Quaternion totalDeltaRot = deltaRot * otherDeltaRot;
-
-                    // Optional double rotation
-                    if (doubleRotation)
-                    {
-                        totalDeltaRot.ToAngleAxis(out float angle, out Vector3 axis);
-                        angle *= 2f;
-                        totalDeltaRot = Quaternion.AngleAxis(angle, axis);
-                    }
-
-                    grabbedObject.rotation = totalDeltaRot * grabbedObject.rotation;
-                }
-                else
-                {
-                    // Only this hand is grabbing
-                    grabbedObject.position += deltaPos;
-
-                    Vector3 dir = grabbedObject.position - transform.position;
-                    dir = deltaRot * dir;
-                    grabbedObject.position = transform.position + dir;
-
-                    // Optional double rotation
-                    if (doubleRotation)
-                    {
-                        deltaRot.ToAngleAxis(out float angle, out Vector3 axis);
-                        angle *= 2f;
-                        deltaRot = Quaternion.AngleAxis(angle, axis);
-                    }
-
-                    grabbedObject.rotation = deltaRot * grabbedObject.rotation;
-                }
+                ApplyGrabTransform();
             }
         }
-        else if (grabbedObject)
+        else
         {
-            // Release object
-            grabbedObject = null;
+            // Release this hand
+            if (grabbedObject)
+            {
+                grabbingHands.Remove(this);
+                if (grabbingHands.Count == 0)
+                    grabbedObject = null;
+            }
         }
 
-        // --- Step 3: Update last position and rotation for this hand ---
+        // --- Step 2: Update last frame position/rotation ---
         lastPosition = transform.position;
         lastRotation = transform.rotation;
+    }
+
+    // --- Register this hand as grabbing the object ---
+    private void RegisterHand(CustomGrab hand)
+    {
+        if (!grabbingHands.Contains(hand))
+            grabbingHands.Add(hand);
+    }
+
+    // --- Apply combined transformation to grabbed object ---
+    private void ApplyGrabTransform()
+    {
+        Vector3 totalDeltaPos = Vector3.zero;
+        Quaternion totalDeltaRot = Quaternion.identity;
+
+        // Calculate deltas for all grabbing hands
+        foreach (var hand in grabbingHands)
+        {
+            Vector3 deltaPos = hand.transform.position - hand.lastPosition;
+            Quaternion deltaRot = hand.transform.rotation * Quaternion.Inverse(hand.lastRotation);
+
+            totalDeltaPos += deltaPos;
+            totalDeltaRot = deltaRot * totalDeltaRot;
+        }
+
+        // Optional: double rotation
+        if (doubleRotation)
+        {
+            totalDeltaRot.ToAngleAxis(out float angle, out Vector3 axis);
+            angle *= 2f;
+            totalDeltaRot = Quaternion.AngleAxis(angle, axis);
+        }
+
+        // --- Apply translation ---
+        grabbedObject.position += totalDeltaPos;
+
+        // --- Apply rotation around pivot ---
+        Vector3 pivot = Vector3.zero;
+        foreach (var hand in grabbingHands)
+            pivot += hand.transform.position;
+        pivot /= grabbingHands.Count;
+
+        Vector3 dir = grabbedObject.position - pivot;
+        dir = totalDeltaRot * dir;
+        grabbedObject.position = pivot + dir;
+
+        // Apply rotation
+        grabbedObject.rotation = totalDeltaRot * grabbedObject.rotation;
+    }
+
+    // --- Find closest grabbable object from nearObjects ---
+    private Transform GetClosestGrabbable()
+    {
+        Transform closest = null;
+        float minDist = float.MaxValue;
+
+        foreach (var obj in nearObjects)
+        {
+            if (!obj) continue;
+            float dist = Vector3.Distance(transform.position, obj.position);
+            if (dist < minDist)
+            {
+                minDist = dist;
+                closest = obj;
+            }
+        }
+
+        return closest;
     }
 
     // --- Trigger detection for nearby objects ---
     private void OnTriggerEnter(Collider other)
     {
-        if (other.transform && other.tag.ToLower() == "grabbable")
+        if (other.transform && other.CompareTag("Grabbable"))
             nearObjects.Add(other.transform);
     }
 
     private void OnTriggerExit(Collider other)
     {
-        if (other.transform && other.tag.ToLower() == "grabbable")
+        if (other.transform && other.CompareTag("Grabbable"))
             nearObjects.Remove(other.transform);
     }
 }
-
